@@ -18,6 +18,7 @@ button{background: linear-gradient(90deg, #5288c1, #00f2ff);color:#000;font-weig
 button:hover{transform:scale(1.02);box-shadow:0 0 10px #00f2ff55}
 .btn-red{background: linear-gradient(90deg, #c15252, #ff6b6b)}
 .btn-green{background: linear-gradient(90deg, #52c17a, #2ecc71)}
+.btn-yellow{background: linear-gradient(90deg, #c1a052, #ffc107)}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .log{background:#000;height:250px;overflow-y:auto;padding:10px;border-radius:10px;font-size:13px;border:1px solid #00f2ff33;color:#00ff88}
 .qr-box{text-align:center;margin:10px 0;min-height:220px;display:flex;align-items:center;justify-content:center;flex-direction:column}
@@ -26,25 +27,37 @@ button:hover{transform:scale(1.02);box-shadow:0 0 10px #00f2ff55}
 .remove-btn{padding:4px 10px;background:#c15252;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px}
 .footer{text-align:center;margin-top:15px;font-size:12px;color:#6ab7ff}
 .tab{display:flex;gap:10px;margin-bottom:10px}
-.tab-btn{flex:1;padding:10px;background:#242f3d;color:#fff;border:1px solid #5288c1}
+.tab-btn{flex:1;padding:10px;background:#242f3d;color:#fff;border:1px solid #5288c1;font-size:12px}
 .tab-btn.active{background: linear-gradient(90deg, #5288c1, #00f2ff);color:#000;font-weight:bold}
 .tab-content{display:none}
 .tab-content.active{display:block}
 .note{font-size:11px;color:#ffaa00;margin-top:5px}
 .status-text{font-size:12px;margin-bottom:10px;color:#6ab7ff}
+.code-box{background:#000;padding:10px;border-radius:10px;text-align:center;font-size:24px;letter-spacing:5px;color:#00f2ff;margin:10px 0}
+.session-box{background:#000;padding:10px;border-radius:10px;word-break:break-all;font-size:12px;color:#52c17a}
+.vote-counter{background:#000;padding:10px;border-radius:10px;margin:10px 0;text-align:center}
 </style>
 </head>
 <body>
 <div class="container">
-<div class="header"><h1>✨ KoSh Vote Panel ✨</h1><p class="status-text">Group + Channel + Auto Remove | QR On Click Only</p></div>
+<div class="header"><h1>✨ KoSh Vote Panel ✨</h1><p class="status-text">Group + Channel + 1 Min Delay + Session Generator</p></div>
 
-<div class="card"><h3>📊 Status & Bot List</h3><div id="statusBox">Loading...</div><button class="btn-green" onclick="refreshList()">🔄 Refresh</button></div>
+<div class="card">
+<h3>📊 Live Status</h3>
+<div id="statusBox">Loading...</div>
+<div class="vote-counter">
+    <p style="color:#6ab7ff;font-size:12px">Total Votes Cast</p>
+    <h2 id="voteCounter" style="color:#00f2ff;font-size:32px">0</h2>
+</div>
+<button class="btn-green" onclick="refreshList()">🔄 Refresh</button>
+</div>
 
 <div class="card">
 <h3>🔐 Session Control Menu</h3>
 <div class="tab">
-<button class="tab-btn active" onclick="openTab('tab1')">1. Multiple Accounts</button>
-<button class="tab-btn" onclick="openTab('tab2')">2. Session Login ID</button>
+<button class="tab-btn active" onclick="openTab('tab1')">1. Add + QR</button>
+<button class="tab-btn" onclick="openTab('tab2')">2. Session Login</button>
+<button class="tab-btn" onclick="openTab('tab3')">3. Gen Session</button>
 </div>
 
 <div id="tab1" class="tab-content active">
@@ -60,13 +73,28 @@ button:hover{transform:scale(1.02);box-shadow:0 0 10px #00f2ff55}
 <input id="sessionId" placeholder="KoShBot!H4sIAAAA...">
 <div class="grid"><button class="btn-green" onclick="loginSession()">🔑 Login</button></div>
 </div>
+
+<div id="tab3" class="tab-content">
+<p style="font-size:12px;color:#6ab7ff;margin-bottom:10px">Generate Session ID from Panel</p>
+<input id="genNumber" placeholder="WhatsApp Number: 92307xxxxxxx">
+<button class="btn-yellow" onclick="genSession()">📲 Generate Code</button>
+<div id="codeArea" style="display:none">
+    <div class="code-box" id="pairCode">---- ----</div>
+    <p style="text-align:center;font-size:12px">WhatsApp > Linked Devices > Link with phone number</p>
+</div>
+<div id="sessionArea" style="display:none">
+    <p style="color:#52c17a">✅ Session ID Ready:</p>
+    <div class="session-box" id="genSessionId"></div>
+    <button onclick="copySession()">📋 Copy Session</button>
+</div>
+</div>
 </div>
 
 <div class="card"><h3>🗳️ Round Control Menu</h3>
 <select id="option"><option value="A">Option A</option><option value="B">Option B</option><option value="C">Option C</option><option value="D">Option D</option><option value="E">Option E</option></select>
 <input id="link" placeholder="Paste Group Link or Channel Link">
 <input id="voteCount" type="number" placeholder="Number of Rounds: Min 1" value="1" min="1">
-<p class="note">Note: Each bot votes once per 15min. Works on Group + Channel both</p>
+<p class="note">Note: 1 min wait in Group after join. Each bot votes once per 15min</p>
 <div class="grid"><button onclick="setOption()">Set Option</button><button class="btn-green" onclick="startVote()">Start Voting</button></div>
 <button class="btn-red" onclick="stopVote()">Stop Voting</button></div>
 
@@ -80,9 +108,9 @@ button:hover{transform:scale(1.02);box-shadow:0 0 10px #00f2ff55}
 </div>
 
 <script>
-const socket = io(); const API = '/api';
+const socket = io(); const API = '/api'; let currentGenId = '';
 function log(msg){ document.getElementById('log').innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}<br>`; document.getElementById('log').scrollTop = 99999; }
-async function api(endpoint, data={}){ let res = await fetch(API+endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}); let json = await res.json(); log(json.msg); }
+async function api(endpoint, data={}){ let res = await fetch(API+endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}); let json = await res.json(); log(json.msg); return json; }
 
 function openTab(tabId){
     document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
@@ -100,9 +128,25 @@ function stopVote(){ api('/stopvote') }
 function resetDB(){ if(confirm('Are you sure you want to reset database?')) api('/resetdb') }
 function removeBot(id){ if(confirm(`Remove Bot-${id}?`)){ api('/rmsession', {id:id}) } }
 
+async function genSession(){
+    const num = genNumber.value;
+    if(!num) return log("❌ Enter Number First");
+    document.getElementById('codeArea').style.display = 'block';
+    const res = await api('/gen/start', {number: num});
+    document.getElementById('pairCode').innerText = res.code;
+    currentGenId = res.genId;
+}
+
+function copySession(){
+    const text = document.getElementById('genSessionId').innerText;
+    navigator.clipboard.writeText(text);
+    log("✅ Session ID Copied");
+}
+
 async function refreshList(){
     let res = await fetch(API+'/list');
     let json = await res.json();
+    document.getElementById('voteCounter').innerText = json.totalVotes;
     document.getElementById('statusBox').innerHTML = `
         <b>Total:</b> ${json.total} | <b>Online:</b> ${json.online} | <b>Option:</b> ${json.option} | <b>Status:</b> ${json.active?'RUNNING':'STOPPED'}<br><br>
         ${json.list.length === 0 ? '<p style="color:#ffaa00">No bots added yet</p>' : json.list.map(b=>`
@@ -121,8 +165,18 @@ socket.on('qr', data=>{
     document.getElementById('qrBox').innerHTML = `<h4 style="margin-bottom:10px;color:#00f2ff">Scan QR for Bot-${data.id}</h4><img src="${data.qr}">`; 
     log(`📲 QR Generated for Bot-${data.id}`); 
 });
+socket.on('gen_session', data=>{
+    if(data.id === currentGenId){
+        document.getElementById('sessionArea').style.display = 'block';
+        document.getElementById('genSessionId').innerText = data.session;
+        log("✅ Session ID Generated Successfully");
+    }
+});
+socket.on('voteUpdate', count=>{
+    document.getElementById('voteCounter').innerText = count;
+});
 socket.on('updateList', ()=>refreshList());
 refreshList();
 </script>
 </body>
-                      </html>
+    </html>
