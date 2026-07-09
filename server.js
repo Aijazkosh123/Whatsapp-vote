@@ -8,7 +8,7 @@ const pino = require('pino');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(cors());
 app.use(express.json());
@@ -16,6 +16,7 @@ app.use(express.static('public'));
 
 const PORT = 3000;
 const COOLDOWN = 15 * 60 * 1000;
+const EXPIRE_CHECK = 15 * 60 * 1000;
 const DB_FILE = './database.json';
 const SESSION_FILE = './bots.json';
 
@@ -25,8 +26,10 @@ const ALL_SOCKS = [];
 let VOTE_OPTION = "A";
 let VOTING_ACTIVE = false;
 let CURRENT_LINK = "";
+let VOTE_INTERVAL;
+let VOTE_COUNT = 1;
+let currentVoteRound = 0;
 
-// ====== LOAD/SAVE ======
 function loadDB(){
     if(fs.existsSync(DB_FILE)) VOTE_HISTORY = JSON.parse(fs.readFileSync(DB_FILE));
     if(fs.existsSync(SESSION_FILE)) BOTS = JSON.parse(fs.readFileSync(SESSION_FILE));
@@ -37,21 +40,22 @@ function saveDB(){
 }
 setInterval(saveDB, 10000);
 
-// ====== AUTO REMOVE EXPIRED SESSION ======
-function checkSessions(){
+function checkExpiredSessions(){
+    let removed = 0;
     BOTS.forEach(bot => {
         const creds = `./sessions/session_${bot.id}/creds.json`;
-        if(!fs.existsSync(creds)){
+        const isOnline = ALL_SOCKS.find(s=>s.id===bot.id);
+        if(!isOnline &&!fs.existsSync(creds)){
             BOTS = BOTS.filter(b=>b.id!== bot.id);
+            if(fs.existsSync(`./sessions/session_${bot.id}`)) fs.rmSync(`./sessions/session_${bot.id}`, { recursive: true, force: true });
+            removed++;
             io.emit('log', `🗑️ ${bot.name} Auto Removed - Session Expired`);
-            io.emit('updateList');
         }
     });
-    saveDB();
+    if(removed > 0){ saveDB(); io.emit('updateList'); }
 }
-setInterval(checkSessions, 60*1000);
+setInterval(checkExpiredSessions, EXPIRE_CHECK);
 
-// ====== START BOT ======
 async function startBot(botInfo) {
     const sessionFolder = `./sessions/session_${botInfo.id}`;
     if(!fs.existsSync(sessionFolder)) fs.mkdirSync(sessionFolder, { recursive: true });
@@ -70,7 +74,7 @@ async function startBot(botInfo) {
             const shouldReconnect = (lastDisconnect.error)?.output?.statusCode!== DisconnectReason.loggedOut;
             if(shouldReconnect){ await delay(5000); startBot(botInfo); }
             else {
-                io.emit('log', `❌ ${botInfo.name} Logout`);
+                io.emit('log', `❌ ${botInfo.name} Logged Out`);
                 const index = ALL_SOCKS.findIndex(s=>s.id===botInfo.id);
                 if(index > -1) ALL_SOCKS.splice(index,1);
                 io.emit('updateList');
@@ -83,18 +87,25 @@ async function startBot(botInfo) {
     });
 }
 
-// ====== VOTE LOGIC ======
 async function masterVote(){
     if(!VOTING_ACTIVE) return;
+    if(currentVoteRound >= VOTE_COUNT){
+        VOTING_ACTIVE = false;
+        clearInterval(VOTE_INTERVAL);
+        io.emit('log', `✅ Voting Finished - ${VOTE_COUNT} Rounds Complete`);
+        return;
+    }
+
     const inviteCode = CURRENT_LINK.split('/').pop();
     let success = 0; let skipped = 0; let fail = 0;
+    currentVoteRound++;
 
     for(let bot of ALL_SOCKS){
         if(!VOTING_ACTIVE) break;
-        const key = `${CURRENT_LINK}_${bot.id}`;
+        const key = `${CURRENT_LINK}_${bot.id}_${currentVoteRound}`;
         if(VOTE_HISTORY[key] && Date.now() - VOTE_HISTORY[key] < COOLDOWN){ skipped++; continue; }
 
-        await delay(1500);
+        await delay(2000);
         try {
             await bot.sock.groupAcceptInvite(inviteCode);
             await delay(2000);
@@ -104,41 +115,39 @@ async function masterVote(){
                 const options = pollMsg.message.pollCreationMessage.options;
                 const optionIndex = "ABCDE".indexOf(VOTE_OPTION.toUpperCase());
                 if(optionIndex < options.length){
-                    await bot.sock.sendMessage(pollMsg.key.remoteJid, {
-                        pollUpdateMessage: { pollCreationMessageKey: pollMsg.key, pollUpdate: { optionVotes: [options[optionIndex].optionName] } }
-                    });
+                    await bot.sock.sendMessage(pollMsg.key.remoteJid, { pollUpdateMessage: { pollCreationMessageKey: pollMsg.key, pollUpdate: { optionVotes: [options[optionIndex].optionName] } });
                     VOTE_HISTORY[key] = Date.now(); success++;
-                    io.emit('log', `🗳️ ${bot.name} voted ${VOTE_OPTION} - DONE`);
+                    io.emit('log', `🗳️ Round ${currentVoteRound}: ${bot.name} voted ${VOTE_OPTION}`);
                 }
             }
         } catch(e){ fail++; io.emit('log', `❌ ${bot.name} Failed`); }
     }
     saveDB();
-    io.emit('log', `📊 Round Done | Voted: ${success} | Skipped: ${skipped} | Failed: ${fail}`);
+    io.emit('log', `📊 Round ${currentVoteRound} Done | Voted: ${success} | Skipped: ${skipped} | Failed: ${fail}`);
 }
 
-// ====== API ROUTES ======
 app.post('/api/addsession', (req,res)=>{
     const {id,name} = req.body;
-    if(BOTS.find(b=>b.id===id)) return res.json({msg:"❌ Bot Already Exists"});
+    if(BOTS.find(b=>b.id===id)) return res.json({msg:"❌ Bot ID Already Exists"});
     BOTS.push({id,name}); saveDB(); startBot({id,name});
-    res.json({msg:`✅ ${name} Added`});
+    res.json({msg:`✅ ${name} Created. Please Get QR`});
+});
+
+app.post('/api/rmsession', (req,res)=>{
+    const {id} = req.body;
+    BOTS = BOTS.filter(b=>b.id!==id);
+    if(fs.existsSync(`./sessions/session_${id}`)) fs.rmSync(`./sessions/session_${id}`, { recursive: true, force: true });
+    const sockIndex = ALL_SOCKS.findIndex(s=>s.id===id);
+    if(sockIndex > -1) ALL_SOCKS.splice(sockIndex,1);
+    saveDB(); io.emit('updateList');
+    res.json({msg:`🗑️ Bot-${id} Removed Successfully`});
 });
 
 app.post('/api/qr', (req,res)=>{
     const {id} = req.body;
-    if(!BOTS.find(b=>b.id===id)) BOTS.push({id,name:`Bot-${id}`});
-    saveDB(); startBot({id,name:`Bot-${id}`});
-    res.json({msg:`📲 QR Generating...`});
-});
-
-app.post('/api/extract', (req,res)=>{
-    const {id} = req.body;
-    const credsFile = `./sessions/session_${id}/creds.json`;
-    if(!fs.existsSync(credsFile)) return res.json({msg:"❌ Session نہیں ملا"});
-    const jsonData = fs.readFileSync(credsFile, 'utf-8');
-    const base64Data = Buffer.from(jsonData).toString('base64');
-    res.json({msg:`✅ Session ID`, sessionId: `KnightBot!${base64Data}`});
+    if(!BOTS.find(b=>b.id===id)) return res.json({msg:"❌ Please Add Bot First"});
+    startBot({id,name:`Bot-${id}`});
+    res.json({msg:`📲 Generating QR for Bot-${id}...`});
 });
 
 app.post('/api/session', async (req,res)=>{
@@ -152,240 +161,30 @@ app.post('/api/session', async (req,res)=>{
     } catch(e){ return res.json({msg:"❌ Invalid Session ID"}) }
     if(!BOTS.find(b=>b.id===id)) BOTS.push({id,name});
     saveDB(); startBot({id,name});
-    res.json({msg:`✅ ${name} Login`});
+    res.json({msg:`✅ ${name} Login Success`});
 });
 
-app.post('/api/rmsession', (req,res)=>{
-    const {id} = req.body;
-    BOTS = BOTS.filter(b=>b.id!==id);
-    fs.rmSync(`./sessions/session_${id}`, { recursive: true, force: true });
-    saveDB();
-    res.json({msg:`✅ Bot-${id} Removed`});
-});
-
-app.post('/api/option', (req,res)=>{
-    VOTE_OPTION = req.body.option.toUpperCase();
-    res.json({msg:`✅ Vote Option: ${VOTE_OPTION}`});
-});
+app.post('/api/option', (req,res)=>{ VOTE_OPTION = req.body.option.toUpperCase(); res.json({msg:`✅ Vote Option Set: ${VOTE_OPTION}`}); });
 
 app.post('/api/startvote', (req,res)=>{
     VOTING_ACTIVE = true;
     CURRENT_LINK = req.body.link;
-    io.emit('log', `🚀 Voting STARTED | Option: ${VOTE_OPTION}`);
-    res.json({msg:`🚀 Voting Started`});
-    setInterval(()=>{ if(VOTING_ACTIVE) masterVote(); }, 5000); // har 5 sec bad vote
+    VOTE_COUNT = parseInt(req.body.count) || 1;
+    if(VOTE_COUNT < 1) VOTE_COUNT = 1; // CHANGED TO 1
+    currentVoteRound = 0;
+    io.emit('log', `🚀 Voting STARTED | Rounds: ${VOTE_COUNT} | Option: ${VOTE_OPTION}`);
+    res.json({msg:`🚀 Voting Started - ${VOTE_COUNT} Rounds`});
+    clearInterval(VOTE_INTERVAL);
+    VOTE_INTERVAL = setInterval(()=>{ if(VOTING_ACTIVE) masterVote(); }, 5000);
 });
 
-app.post('/api/stopvote', (req,res)=>{
-    VOTING_ACTIVE = false;
-    res.json({msg:`🛑 Voting Stopped`});
-});
+app.post('/api/stopvote', (req,res)=>{ VOTING_ACTIVE = false; clearInterval(VOTE_INTERVAL); res.json({msg:`🛑 Voting Stopped`}); });
+app.get('/api/list', (req,res)=>{ let list = BOTS.map(b=>({ id:b.id, name:b.name, status: ALL_SOCKS.find(s=>s.id===b.id)?'Online':'Offline' })); res.json({list, option:VOTE_OPTION, total:BOTS.length, online:ALL_SOCKS.length, active:VOTING_ACTIVE}); });
+app.post('/api/resetdb', (req,res)=>{ VOTE_HISTORY={}; saveDB(); res.json({msg:"✅ Database Reset"}) });
 
-app.get('/api/list', (req,res)=>{
-    let list = BOTS.map(b=>({ id:b.id, name:b.name, status: ALL_SOCKS.find(s=>s.id===b.id)?'Online':'Offline' }));
-    res.json({list, option:VOTE_OPTION, total:BOTS.length, online:ALL_SOCKS.length, active:VOTING_ACTIVE});
-});
-
-// ====== START ======
 io.on('connection', ()=>{});
 loadDB();
 if(!fs.existsSync('./sessions')) fs.mkdirSync('./sessions');
 BOTS.forEach(bot => startBot(bot));
 
-server.listen(PORT, ()=>console.log(`✅ Panel Running: http://localhost:${PORT}`));}
-setInterval(saveDB, 10000);
-
-// ====== AUTO BACKUP ======
-function autoBackup(){
-    if(!fs.existsSync(BACKUP_FOLDER)) fs.mkdirSync(BACKUP_FOLDER);
-    const time = new Date().toISOString().replace(/[:.]/g,'-');
-    if(fs.existsSync(DB_FILE)) fs.copyFileSync(DB_FILE, `${BACKUP_FOLDER}database_${time}.json`);
-    if(fs.existsSync(SESSION_FILE)) fs.copyFileSync(SESSION_FILE, `${BACKUP_FOLDER}bots_${time}.json`);
-}
-
-// ====== START WHATSAPP BOT ======
-async function startBot(botInfo) {
-    const sessionFolder = `./sessions/session_${botInfo.id}`;
-    if(!fs.existsSync(sessionFolder)) fs.mkdirSync(sessionFolder, { recursive: true });
-
-    const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
-    const sock = makeWASocket({ 
-        logger: pino({ level: 'silent' }), 
-        printQRInTerminal: false, 
-        auth: state,
-        browser: Browsers.macOS("Chrome")
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, qr, lastDisconnect } = update;
-        if(qr){
-            const qrCode = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
-            io.emit('qr', {id: botInfo.id, qr: qrCode});
-        }
-        if(connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode!== DisconnectReason.loggedOut;
-            if(shouldReconnect){ await delay(5000); startBot(botInfo); }
-            else { 
-                io.emit('log', `❌ ${botInfo.name} Logout`);
-                const index = ALL_SOCKS.findIndex(s=>s.id===botInfo.id);
-                if(index > -1) ALL_SOCKS.splice(index,1);
-                io.emit('updateList');
-            }
-        } else if(connection === 'open') {
-            if(!ALL_SOCKS.find(s=>s.id===botInfo.id)) ALL_SOCKS.push({ id: botInfo.id, name: botInfo.name, sock });
-            io.emit('log', `✅ ${botInfo.name} Online`);
-            io.emit('updateList');
-        }
-    });
-}
-
-// ====== VOTE ======
-async function masterVote(groupLink){
-    const inviteCode = groupLink.split('/').pop();
-    let success = 0; let skipped = 0; let fail = 0;
-    io.emit('log', `🚀 Voting Start... Option: ${VOTE_OPTION}`);
-
-    for(let bot of ALL_SOCKS){
-        const key = `${groupLink}_${bot.id}`;
-        if(VOTE_HISTORY[key] && Date.now() - VOTE_HISTORY[key] < COOLDOWN){ skipped++; continue; }
-        await delay(2000);
-        try {
-            await bot.sock.groupAcceptInvite(inviteCode);
-            await delay(1000);
-            // یہاں تمہارا Poll Vote والا logic آئے گا
-            io.emit('log', `✅ ${bot.name} joined group`);
-            VOTE_HISTORY[key] = Date.now(); success++;
-        } catch(e){ 
-            io.emit('log', `❌ ${bot.name} Failed: ${e.message}`);
-            fail++; 
-        }
-    }
-    saveDB();
-    io.emit('log', `✅ Done | Voted: ${success} | Skipped: ${skipped} | Failed: ${fail}`);
-}
-
-// ====== API ROUTES ======
-app.post('/api/addsession', (req,res)=>{
-    const {id,name} = req.body;
-    if(BOTS.find(b=>b.id===id)) return res.json({msg:"❌ Bot Already Exists"});
-    BOTS.push({id,name}); saveDB(); startBot({id,name});
-    res.json({msg:`✅ ${name} Added. Now Get QR`});
-});
-
-app.post('/api/qr', (req,res)=>{
-    const {id} = req.body;
-    if(!BOTS.find(b=>b.id===id)) BOTS.push({id,name:`Bot-${id}`});
-    saveDB(); startBot({id,name:`Bot-${id}`});
-    res.json({msg:`📲 QR Generating... Wait 3 sec`});
-});
-
-app.post('/api/extract', (req,res)=>{
-    const {id} = req.body;
-    const credsFile = `./sessions/session_${id}/creds.json`;
-    if(!fs.existsSync(credsFile)) return res.json({msg:"❌ Session نہیں ملا"});
-    const jsonData = fs.readFileSync(credsFile, 'utf-8');
-    const base64Data = Buffer.from(jsonData).toString('base64');
-    const sessionId = `KnightBot!${base64Data}`;
-    res.json({msg:`✅ Session ID Copied`, sessionId});
-});
-
-app.post('/api/session', async (req,res)=>{
-    const {id,sessionId} = req.body;
-    const name = `Bot-${id}`;
-    const sessionFolder = `./sessions/session_${id}`;
-    if(!fs.existsSync(sessionFolder)) fs.mkdirSync(sessionFolder, { recursive: true });
-    try {
-        const base64Data = sessionId.replace("KnightBot!", "");
-        const jsonData = Buffer.from(base64Data, 'base64').toString('utf-8');
-        fs.writeFileSync(`${sessionFolder}/creds.json`, jsonData);
-    } catch(e){ return res.json({msg:"❌ Invalid Session ID"}) }
-    if(!BOTS.find(b=>b.id===id)) BOTS.push({id,name});
-    saveDB(); startBot({id,name});
-    res.json({msg:`✅ ${name} Login`});
-});
-
-app.post('/api/rmsession', (req,res)=>{
-    const {id} = req.body;
-    BOTS = BOTS.filter(b=>b.id!==id);
-    fs.rmSync(`./sessions/session_${id}`, { recursive: true, force: true });
-    saveDB();
-    res.json({msg:`✅ Bot-${id} Removed`});
-});
-
-app.post('/api/option', (req,res)=>{
-    VOTE_OPTION = parseInt(req.body.option);
-    res.json({msg:`✅ Vote Option: ${VOTE_OPTION}`});
-});
-
-app.post('/api/vote', (req,res)=>{
-    masterVote(req.body.link);
-    res.json({msg:`🚀 Voting Started`});
-});
-
-app.get('/api/list', (req,res)=>{
-    let list = BOTS.map(b=>({
-        id:b.id, name:b.name, 
-        status: ALL_SOCKS.find(s=>s.id===b.id)?'Online':'Offline'
-    }));
-    res.json({list, option:VOTE_OPTION, total:BOTS.length, online:ALL_SOCKS.length});
-});
-
-app.post('/api/backup', (req,res)=>{ autoBackup(); res.json({msg:"✅ Backup Done"}) });
-app.post('/api/resetdb', (req,res)=>{ VOTE_HISTORY={}; saveDB(); res.json({msg:"✅ DB Reset"}) });
-
-// ====== START ======
-io.on('connection', ()=>{});
-
-loadDB();
-if(!fs.existsSync('./sessions')) fs.mkdirSync('./sessions');
-BOTS.forEach(bot => startBot(bot));
-autoBackup();
-
-server.listen(PORT, ()=>console.log(`✅ Panel Running: http://localhost:${PORT}`));    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', (update)=>{
-        if(update.qr){
-            sessions[id].qr = update.qr; // QR save kar lo
-            console.log(`QR for ${id} ready`);
-        }
-        if(update.connection === 'open'){
-            console.log(`✅ Bot ${id} Connected`);
-            sessions[id].qr = null; // QR clear
-        }
-        if(update.connection === 'close'){
-            delete sessions[id];
-        }
-    });
-
-    res.json({msg:`Bot ${id} - ${name} Added ✅. Ab QR lo`});
-});
-
-// 2. QR Get - Panel me dikhega
-app.post('/api/qr', async (req,res)=>{
-    const {id} = req.body;
-    if(!sessions[id]) return res.json({msg:"Pehle bot add karo"});
-    if(!sessions[id].qr) return res.json({msg:"QR nahi mila. 5 sec wait karke dobara try karo"});
-
-    res.json({msg:"QR Ready", qr: sessions[id].qr});
-});
-
-// 3. Vote
-app.post('/api/vote', async (req,res)=>{
-    const {link} = req.body;
-    if(!link) return res.json({msg:"Group link do"});
-    if(!link.includes('chat.whatsapp.com/')) return res.json({msg:"Sahi group link do"});
-
-    const groupId = link.split('/')[3];
-    let count = 0;
-    for(let id in sessions){
-        try{
-            await sessions[id].sock.sendMessage(groupId+'@g.us', {text: `Vote from ${sessions[id].name}`});
-            count++;
-            await new Promise(r => setTimeout(r, 2000)); // 2 sec delay
-        }catch(e){}
-    }
-    res.json({msg:`${count} Bot se Vote bhej diya ✅`});
-});
-
-app.listen(PORT, ()=>console.log(`✅ Panel Running: http://localhost:${PORT}`));
+server.listen(PORT, '0.0.0.0', ()=>console.log(`✅ KoSh Panel Running: http://0.0.0.0:${PORT}`));
