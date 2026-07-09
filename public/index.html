@@ -9,32 +9,34 @@ body{background: linear-gradient(135deg, #0e1621 0%, #1a2a3a 100%);color:#fff;pa
 .container{max-width:850px;margin:auto}
 .header{text-align:center;padding:15px;margin-bottom:10px}
 .header h1{font-size:28px;font-weight:900;background: linear-gradient(90deg, #00f2ff, #5288c1);-webkit-background-clip: text;-webkit-text-fill-color: transparent;text-shadow: 0 0 15px #5288c1aa;}
-.card{background:#17212bcc;padding:15px;margin:10px 0;border-radius:15px;border:1px solid #5288c144}
-h3{color:#00f2ff;margin-bottom:10px;border-left:3px solid #00f2ff;padding-left:10px}
+.card{background:#17212bcc;padding:15px;margin:10px 0;border-radius:15px;border:1px solid #5288c144;backdrop-filter: blur(10px)}
+h3{color:#00f2ff;margin-bottom:10px;border-left:3px solid #00f2ff;padding-left:10px;font-size:16px}
 input,button,select{width:100%;padding:12px;margin:6px 0;border:none;border-radius:10px;font-size:15px}
-input,select{background:#242f3d;color:#fff;border:1px solid #2f3b4c}
+input,select{background:#242f3d;color:#fff;border:1px solid #2f3b4c;outline:none}
+input:focus{border-color:#00f2ff}
 button{background: linear-gradient(90deg, #5288c1, #00f2ff);color:#000;font-weight:bold;cursor:pointer;transition:0.3s}
-button:hover{transform:scale(1.02)}
+button:hover{transform:scale(1.02);box-shadow:0 0 10px #00f2ff55}
 .btn-red{background: linear-gradient(90deg, #c15252, #ff6b6b)}
 .btn-green{background: linear-gradient(90deg, #52c17a, #2ecc71)}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.log{background:#000;height:250px;overflow-y:auto;padding:10px;border-radius:10px;font-size:13px;border:1px solid #00f2ff33}
-.qr-box{text-align:center;margin:10px 0}
-.qr-box img{background:#fff;padding:10px;border-radius:10px}
+.log{background:#000;height:250px;overflow-y:auto;padding:10px;border-radius:10px;font-size:13px;border:1px solid #00f2ff33;color:#00ff88}
+.qr-box{text-align:center;margin:10px 0;min-height:220px;display:flex;align-items:center;justify-content:center;flex-direction:column}
+.qr-box img{background:#fff;padding:10px;border-radius:10px;box-shadow:0 0 20px #00f2ff55}
 .status{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #2f3b4c}
 .remove-btn{padding:4px 10px;background:#c15252;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px}
 .footer{text-align:center;margin-top:15px;font-size:12px;color:#6ab7ff}
 .tab{display:flex;gap:10px;margin-bottom:10px}
 .tab-btn{flex:1;padding:10px;background:#242f3d;color:#fff;border:1px solid #5288c1}
-.tab-btn.active{background: linear-gradient(90deg, #5288c1, #00f2ff);color:#000}
+.tab-btn.active{background: linear-gradient(90deg, #5288c1, #00f2ff);color:#000;font-weight:bold}
 .tab-content{display:none}
 .tab-content.active{display:block}
 .note{font-size:11px;color:#ffaa00;margin-top:5px}
+.status-text{font-size:12px;margin-bottom:10px;color:#6ab7ff}
 </style>
 </head>
 <body>
 <div class="container">
-<div class="header"><h1>✨ KoSh Vote Panel ✨</h1><p>Auto Remove + Unlimited Voting</p></div>
+<div class="header"><h1>✨ KoSh Vote Panel ✨</h1><p class="status-text">Group + Channel + Auto Remove | QR On Click Only</p></div>
 
 <div class="card"><h3>📊 Status & Bot List</h3><div id="statusBox">Loading...</div><button class="btn-green" onclick="refreshList()">🔄 Refresh</button></div>
 
@@ -46,34 +48,33 @@ button:hover{transform:scale(1.02)}
 </div>
 
 <div id="tab1" class="tab-content active">
-<p style="font-size:12px;color:#6ab7ff;margin-bottom:10px">Create new bots by scanning QR - Unlimited</p>
+<p style="font-size:12px;color:#6ab7ff;margin-bottom:10px">Step 1: Add Bot | Step 2: Click Get QR to Login</p>
 <input id="botId" placeholder="Bot ID: 1,2,3,4...">
 <input id="botName" placeholder="Bot Name: Bot-1">
 <div class="grid"><button onclick="addSession()">➕ Add Bot</button><button onclick="getQR()">📲 Get QR</button></div>
 </div>
 
 <div id="tab2" class="tab-content">
-<p style="font-size:12px;color:#6ab7ff;margin-bottom:10px">Login using Session ID - Unlimited</p>
+<p style="font-size:12px;color:#6ab7ff;margin-bottom:10px">Login Direct with Session ID - No QR Needed</p>
 <input id="sId" placeholder="Bot ID: 1,2,3,4...">
-<input id="sessionId" placeholder="KnightBot!H4sIAAAA...">
-<div class="grid"><button class="btn-green" onclick="loginSession()">🔑 Login</button><button onclick="extractSession()">📋 Extract</button></div>
-<div id="extractResult" style="word-break:break-all;color:#00f2ff;margin-top:10px"></div>
+<input id="sessionId" placeholder="KoShBot!H4sIAAAA...">
+<div class="grid"><button class="btn-green" onclick="loginSession()">🔑 Login</button></div>
 </div>
 </div>
 
 <div class="card"><h3>🗳️ Round Control Menu</h3>
 <select id="option"><option value="A">Option A</option><option value="B">Option B</option><option value="C">Option C</option><option value="D">Option D</option><option value="E">Option E</option></select>
-<input id="link" placeholder="Group Invite Link">
+<input id="link" placeholder="Paste Group Link or Channel Link">
 <input id="voteCount" type="number" placeholder="Number of Rounds: Min 1" value="1" min="1">
-<p class="note">Note: Each bot votes once per 15min. Minimum 1 round</p>
+<p class="note">Note: Each bot votes once per 15min. Works on Group + Channel both</p>
 <div class="grid"><button onclick="setOption()">Set Option</button><button class="btn-green" onclick="startVote()">Start Voting</button></div>
 <button class="btn-red" onclick="stopVote()">Stop Voting</button></div>
 
 <div class="card"><h3>🛠️ Tools</h3><button class="btn-red" onclick="resetDB()">Reset Database</button></div>
 
-<div class="card"><h3>📜 Live Log</h3><div class="log" id="log"></div></div>
+<div class="card"><h3>📜 Live Log</h3><div class="log" id="log">Waiting for action...</div></div>
 
-<div class="card"><h3>📲 QR Code</h3><div id="qrBox" class="qr-box">QR will appear here</div></div>
+<div class="card"><h3>📲 QR Code</h3><div id="qrBox" class="qr-box"><p style="color:#6ab7ff">Click "Get QR" to generate QR</p></div></div>
 
 <div class="footer">Developed By <b>Aijaz KoSh</b> | © 2026</div>
 </div>
@@ -81,7 +82,7 @@ button:hover{transform:scale(1.02)}
 <script>
 const socket = io(); const API = '/api';
 function log(msg){ document.getElementById('log').innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}<br>`; document.getElementById('log').scrollTop = 99999; }
-async function api(endpoint, data={}){ let res = await fetch(API+endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}); let json = await res.json(); log(json.msg); if(json.sessionId) document.getElementById('extractResult').innerText = json.sessionId; }
+async function api(endpoint, data={}){ let res = await fetch(API+endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)}); let json = await res.json(); log(json.msg); }
 
 function openTab(tabId){
     document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
@@ -93,23 +94,22 @@ function openTab(tabId){
 function addSession(){ api('/addsession', {id:botId.value, name:botName.value}) }
 function getQR(){ api('/qr', {id:botId.value}) }
 function loginSession(){ api('/session', {id:sId.value, sessionId:sessionId.value}) }
-function extractSession(){ api('/extract', {id:sId.value}) }
 function setOption(){ api('/option', {option:option.value}) }
 function startVote(){ api('/startvote', {link:link.value, count:voteCount.value}) }
 function stopVote(){ api('/stopvote') }
-function resetDB(){ if(confirm('Are you sure?')) api('/resetdb') }
+function resetDB(){ if(confirm('Are you sure you want to reset database?')) api('/resetdb') }
 function removeBot(id){ if(confirm(`Remove Bot-${id}?`)){ api('/rmsession', {id:id}) } }
 
 async function refreshList(){
     let res = await fetch(API+'/list');
     let json = await res.json();
     document.getElementById('statusBox').innerHTML = `
-        Total: ${json.total} | Online: ${json.online} | Option: ${json.option} | Status: ${json.active?'RUNNING':'STOPPED'}<br><br>
-        ${json.list.map(b=>`
+        <b>Total:</b> ${json.total} | <b>Online:</b> ${json.online} | <b>Option:</b> ${json.option} | <b>Status:</b> ${json.active?'RUNNING':'STOPPED'}<br><br>
+        ${json.list.length === 0 ? '<p style="color:#ffaa00">No bots added yet</p>' : json.list.map(b=>`
             <div class="status">
                 <span>${b.name}</span>
                 <span>
-                    <span style="color:${b.status=='Online'?'#52c17a':'#c15252'}">${b.status}</span>
+                    <span style="color:${b.status=='Online'?'#52c17a':'#c15252'};font-weight:bold">${b.status}</span>
                     <button class="remove-btn" onclick="removeBot('${b.id}')">Remove</button>
                 </span>
             </div>
@@ -117,9 +117,12 @@ async function refreshList(){
     `;
 }
 socket.on('log', msg=>log(msg));
-socket.on('qr', data=>{ document.getElementById('qrBox').innerHTML = `<h4>Bot-${data.id} QR</h4><img src="${data.qr}">`; log(`📲 QR for Bot-${data.id}`); });
+socket.on('qr', data=>{ 
+    document.getElementById('qrBox').innerHTML = `<h4 style="margin-bottom:10px;color:#00f2ff">Scan QR for Bot-${data.id}</h4><img src="${data.qr}">`; 
+    log(`📲 QR Generated for Bot-${data.id}`); 
+});
 socket.on('updateList', ()=>refreshList());
 refreshList();
 </script>
 </body>
-                                                                                                                                                                                                       </html>
+                      </html>
